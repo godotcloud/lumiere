@@ -1,7 +1,39 @@
-- name: Checkout Code
-  uses: actions/checkout@v4
+name: Build iOS Code
 
-- name: Unzip Project Folder
-  run: |
-    unzip -o *.zip -d ./
-    ls -R
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Unzip Project Files
+        run: |
+          mkdir -p src
+          unzip -o "*.zip" -d src/
+          echo "=== 解压后的文件列表 ==="
+          ls -R src/
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Compile Swift Code
+        run: |
+          mkdir -p build
+          # 自动递归搜索 zip 解压出的所有 Swift 文件进行编译
+          SWIFT_FILES=$(find src -name "*.swift")
+          echo "Compiling files: $SWIFT_FILES"
+          xcrun -sdk iphonesimulator swiftc -target arm64-apple-ios17.0-simulator $SWIFT_FILES -o build/AppBinary
+          echo "Build finished successfully."
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiled-binary
+          path: build/
