@@ -1,0 +1,146 @@
+name: TestFlight
+
+# 只在手动点击时运行：签名涉及开发者证书，不适合每次 push 都跑。
+# 需要先在下述「准备签名材料」中配置 6 个 Secrets，否则这个 job 会明确报错。
+on:
+  workflow_dispatch:
+    inputs:
+      changelog:
+        description: TestFlight 测试说明
+        required: false
+        default: "Lumière 1.0"
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+env:
+  PROJECT: Lumiere.xcodeproj
+  SCHEME: Lumiere
+  BUNDLE_ID: com.lumiere.camera
+
+jobs:
+  upload:
+    name: 归档并上传 TestFlight
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # ---- 准备签名材料 ----------------------------------------------------
+      # Secrets:
+      #   DIST_CERT_P12        发布证书 .p12 的 base64
+      #   DIST_CERT_PASSWORD   .p12 导出时设置的密码
+      #   PROVISIONING_PROFILE App Store 描述文件的 base64
+      #   PROFILE_NAME         描述文件的 Name 字段（不是文件名）
+      #   TEAM_ID              10 位 Team ID
+      #   KEYCHAIN_PASSWORD    临时钥匙串密码（随便生成一串即可）
+      #   ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY  用于上传的 App Store Connect API Key
+      - name: 导入证书与描述文件
+        env:
+          CERT_P12: ${{ secrets.DIST_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DIST_CERT_PASSWORD }}
+          PROFILE: ${{ secrets.PROVISIONING_PROFILE }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security list-keychains -d user -s build.keychain
+
+          printf '%s' "$CERT_P12" | base64 -D > cert.p12
+          security import cert.p12 -k build.keychain \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          printf '%s' "$PROFILE" | base64 -D \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/lumiere.mobileprovision
+
+          security find-identity -v -p codesigning build.keychain
+
+      - name: 归档
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          PROFILE_NAME: ${{ secrets.PROFILE_NAME }}
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Lumiere.xcarchive \
+            -allowProvisioningUpdates \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
+
+      - name: 导出 IPA
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          PROFILE_NAME: ${{ secrets.PROFILE_NAME }}
+        run: |
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>teamID</key>
+            <string>${TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>iPhone Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key>
+              <string>${PROFILE_NAME}</string>
+            </dict>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath build/Lumiere.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates
+
+      - name: 上传到 App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY: ${{ secrets.ASC_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+          xcrun altool --upload-app \
+            -f build/export/Lumiere.ipa \
+            -t ios \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: 保存 IPA
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lumiere-testflight-ipa
+          path: build/export/*.ipa
+          retention-days: 7
+          if-no-files-found: ignore
