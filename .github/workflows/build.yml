@@ -1,0 +1,7 @@
+- name: Checkout Code
+  uses: actions/checkout@v4
+
+- name: Unzip Project Folder
+  run: |
+    unzip -o *.zip -d ./
+    ls -R
