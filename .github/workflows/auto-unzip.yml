@@ -1,0 +1,37 @@
+name: Auto Unzip Files
+
+on:
+  push:
+    paths:
+      - '*.zip'
+      - '*.ZIP'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  unzip-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Unzip Archive
+        run: |
+          # 解压所有 zip 文件到当前目录
+          for f in *.[zZ][iI][pP]; do
+            if [ -f "$f" ]; then
+              unzip -o "$f" -d ./
+              rm "$f"
+            fi
+          done
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          # [skip ci] 防止触发后续普通 CI 陷入循环
+          git commit -m "Auto unzipped archive [skip ci]" || echo "No changes to commit"
+          git push
