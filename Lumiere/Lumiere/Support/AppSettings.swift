@@ -38,13 +38,18 @@ final class AppSettings: ObservableObject {
         static let haptics = "settings.haptics"
     }
 
-    private var defaults: UserDefaults { .standard }
+    private let defaults: UserDefaults
 
     private init() {
-        saveToLibrary = defaults.object(forKey: Key.saveToLibrary) as? Bool ?? true
-        mirrorFrontCamera = defaults.object(forKey: Key.mirror) as? Bool ?? false
-        showGrid = defaults.object(forKey: Key.grid) as? Bool ?? true
-        showLevel = defaults.object(forKey: Key.level) as? Bool ?? true
-        haptics = defaults.object(forKey: Key.haptics) as? Bool ?? true
+        // Read through a local first: touching `self.defaults` here would be a
+        // use of `self` before every stored property is initialised.
+        let store = UserDefaults.standard
+        defaults = store
+
+        saveToLibrary = store.object(forKey: Key.saveToLibrary) as? Bool ?? true
+        mirrorFrontCamera = store.object(forKey: Key.mirror) as? Bool ?? false
+        showGrid = store.object(forKey: Key.grid) as? Bool ?? true
+        showLevel = store.object(forKey: Key.level) as? Bool ?? true
+        haptics = store.object(forKey: Key.haptics) as? Bool ?? true
     }
 }

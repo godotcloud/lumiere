@@ -188,7 +188,7 @@ final class CameraService: NSObject {
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
         settings.photoQualityPrioritization = .quality
 
-        if device.hasFlash, device.isFlashModeSupported(flash.deviceMode) {
+        if device.hasFlash, flash != .off {
             settings.flashMode = flash.deviceMode
         }
 
